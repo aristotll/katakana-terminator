@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        Katakana Terminator
-// @description Convert gairaigo (Japanese loan words) back to English
+// @description Convert gairaigo to English and add hiragana readings to kanji
 // @author      Arnie97
 // @license     MIT
 // @copyright   2017-2024, Katakana Terminator Contributors (https://github.com/Arnie97/katakana-terminator/graphs/contributors)
@@ -16,18 +16,24 @@
 // @connect     translate.google.cn
 // @connect     translate.google.com
 // @connect     translate.googleapis.com
-// @version     2024.05.05
+// @version     2026.04.19
 // @name:ja-JP  カタカナターミネーター
 // @name:zh-CN  片假名终结者
-// @description:zh-CN 在网页中的日语外来语上方标注英文原词
+// @description:zh-CN 在网页中的日语外来语上方标注英文原词，并为汉字标注平假名读音
 // ==/UserScript==
 
 // define some shorthands
 var _ = document;
 
 var queue = {};  // {"カタカナ": [rtNodeA, rtNodeB]}
+var furiganaQueue = {};  // {"漢字": [{node: rtNode, suffix: "じ"}]}
 var cachedTranslations = {};  // {"ターミネーター": "Terminator"}
+var cachedReadings = {};  // {"漢字": "かんじ"}
 var newNodes = [_.body];
+var readingSeparator = ' / ';
+var readingApiHosts = ['translate.googleapis.com', 'translate.google.com'];
+var katakanaPattern = /[\u30A1-\u30FA\u30FD-\u30FF][\u3099\u309A\u30A1-\u30FF]*[\u3099\u309A\u30A1-\u30FA\u30FC-\u30FF]|[\uFF66-\uFF6F\uFF71-\uFF9D][\uFF65-\uFF9F]*[\uFF66-\uFF9F]/;
+var kanjiPattern = /[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF][\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF々〆ヵヶ]*/;
 
 // Recursively traverse the given node and its descendants (Depth-first search)
 function scanTextNodes(node) {
@@ -54,26 +60,204 @@ function scanTextNodes(node) {
 // Recursively add ruby tags to text nodes
 // Inspired by http://www.the-art-of-web.com/javascript/search-highlight/
 function addRuby(node) {
-    var katakana = /[\u30A1-\u30FA\u30FD-\u30FF][\u3099\u309A\u30A1-\u30FF]*[\u3099\u309A\u30A1-\u30FA\u30FC-\u30FF]|[\uFF66-\uFF6F\uFF71-\uFF9D][\uFF65-\uFF9F]*[\uFF66-\uFF9F]/, match;
-    if (!node.nodeValue || !(match = katakana.exec(node.nodeValue))) {
+    var match;
+    if (!node.nodeValue || !(match = findRubyMatch(node.nodeValue))) {
         return false;
     }
     var ruby = _.createElement('ruby');
-    ruby.appendChild(_.createTextNode(match[0]));
+    ruby.appendChild(_.createTextNode(match.text));
     var rt = _.createElement('rt');
     rt.classList.add('katakana-terminator-rt');
     ruby.appendChild(rt);
 
-    // Append the ruby title node to the pending-translation queue
-    queue[match[0]] = queue[match[0]] || [];
-    queue[match[0]].push(rt);
+    if (match.type === 'translation') {
+        // Append the ruby title node to the pending-translation queue
+        queue[match.key] = queue[match.key] || [];
+        queue[match.key].push(rt);
+    } else {
+        furiganaQueue[match.key] = furiganaQueue[match.key] || [];
+        furiganaQueue[match.key].push({
+            node: rt,
+            suffix: match.suffix,
+        });
+    }
 
     // <span>[startカナmiddleテストend]</span> =>
     // <span>start<ruby>カナ<rt data-rt="Kana"></rt></ruby>[middleテストend]</span>
     var after = node.splitText(match.index);
     node.parentNode.insertBefore(ruby, after);
-    after.nodeValue = after.nodeValue.substring(match[0].length);
+    after.nodeValue = after.nodeValue.substring(match.text.length);
     return after;
+}
+
+function findRubyMatch(text) {
+    var katakana = katakanaPattern.exec(text),
+        kanji = kanjiPattern.exec(text);
+
+    if (!katakana && !kanji) {
+        return null;
+    }
+
+    if (!kanji || (katakana && katakana.index < kanji.index)) {
+        return {
+            type: 'translation',
+            index: katakana.index,
+            text: katakana[0],
+            key: katakana[0],
+        };
+    }
+
+    return buildKanjiMatch(text, kanji);
+}
+
+function buildKanjiMatch(text, match) {
+    var suffix = findReadingSuffix(text.substring(match.index + match[0].length));
+    return {
+        type: 'reading',
+        index: match.index,
+        text: match[0],
+        key: match[0] + suffix,
+        suffix: suffix,
+    };
+}
+
+function findReadingSuffix(text) {
+    var match = /^[\u3041-\u3096]+/.exec(text),
+        suffix = match ? match[0] : '';
+    if (suffix.length === 1 && isJapaneseParticle(suffix)) {
+        return '';
+    }
+    return suffix;
+}
+
+function isJapaneseParticle(kana) {
+    return kana in {
+        'は': true,
+        'を': true,
+        'が': true,
+        'に': true,
+        'で': true,
+        'と': true,
+        'へ': true,
+        'も': true,
+        'や': true,
+        'の': true,
+        'か': true,
+        'ね': true,
+        'よ': true,
+        'ぞ': true,
+        'な': true,
+    };
+}
+
+var romajiToHiraganaMap = {
+    a: 'あ', i: 'い', u: 'う', e: 'え', o: 'お',
+    ka: 'か', ki: 'き', ku: 'く', ke: 'け', ko: 'こ',
+    kya: 'きゃ', kyu: 'きゅ', kyo: 'きょ',
+    ga: 'が', gi: 'ぎ', gu: 'ぐ', ge: 'げ', go: 'ご',
+    gya: 'ぎゃ', gyu: 'ぎゅ', gyo: 'ぎょ',
+    sa: 'さ', si: 'し', shi: 'し', su: 'す', se: 'せ', so: 'そ',
+    sya: 'しゃ', syu: 'しゅ', syo: 'しょ', sha: 'しゃ', shu: 'しゅ', sho: 'しょ', she: 'しぇ',
+    za: 'ざ', zi: 'じ', ji: 'じ', zu: 'ず', ze: 'ぜ', zo: 'ぞ',
+    zya: 'じゃ', zyu: 'じゅ', zyo: 'じょ', ja: 'じゃ', ju: 'じゅ', jo: 'じょ', je: 'じぇ',
+    ta: 'た', ti: 'ち', chi: 'ち', tu: 'つ', tsu: 'つ', te: 'て', to: 'と',
+    tya: 'ちゃ', tyu: 'ちゅ', tyo: 'ちょ', cha: 'ちゃ', chu: 'ちゅ', cho: 'ちょ', che: 'ちぇ',
+    da: 'だ', di: 'ぢ', du: 'づ', de: 'で', do: 'ど',
+    dya: 'ぢゃ', dyu: 'ぢゅ', dyo: 'ぢょ',
+    na: 'な', ni: 'に', nu: 'ぬ', ne: 'ね', no: 'の',
+    nya: 'にゃ', nyu: 'にゅ', nyo: 'にょ',
+    ha: 'は', hi: 'ひ', hu: 'ふ', fu: 'ふ', he: 'へ', ho: 'ほ',
+    hya: 'ひゃ', hyu: 'ひゅ', hyo: 'ひょ',
+    fa: 'ふぁ', fi: 'ふぃ', fe: 'ふぇ', fo: 'ふぉ',
+    ba: 'ば', bi: 'び', bu: 'ぶ', be: 'べ', bo: 'ぼ',
+    bya: 'びゃ', byu: 'びゅ', byo: 'びょ',
+    pa: 'ぱ', pi: 'ぴ', pu: 'ぷ', pe: 'ぺ', po: 'ぽ',
+    pya: 'ぴゃ', pyu: 'ぴゅ', pyo: 'ぴょ',
+    ma: 'ま', mi: 'み', mu: 'む', me: 'め', mo: 'も',
+    mya: 'みゃ', myu: 'みゅ', myo: 'みょ',
+    ya: 'や', yu: 'ゆ', yo: 'よ',
+    ra: 'ら', ri: 'り', ru: 'る', re: 'れ', ro: 'ろ',
+    rya: 'りゃ', ryu: 'りゅ', ryo: 'りょ',
+    wa: 'わ', wi: 'うぃ', we: 'うぇ', wo: 'を',
+    va: 'ゔぁ', vi: 'ゔぃ', vu: 'ゔ', ve: 'ゔぇ', vo: 'ゔぉ',
+};
+
+function normalizeRomaji(text) {
+    return text.toLowerCase()
+        .replace(/[āâ]/g, 'aa')
+        .replace(/[īî]/g, 'ii')
+        .replace(/[ūû]/g, 'uu')
+        .replace(/[ēê]/g, 'ee')
+        .replace(/[ōô]/g, 'ou');
+}
+
+function romajiToHiragana(text) {
+    var romaji = normalizeRomaji(text),
+        result = '',
+        i = 0,
+        piece,
+        found,
+        length;
+
+    while (i < romaji.length) {
+        if (!isRomajiLetter(romaji.charAt(i))) {
+            i++;
+            continue;
+        }
+
+        if (romaji.substring(i, i + 3) === 'tch') {
+            result += 'っ';
+            i++;
+            continue;
+        }
+
+        if (isDoubleConsonant(romaji, i)) {
+            result += 'っ';
+            i++;
+            continue;
+        }
+
+        if (romaji.charAt(i) === 'n' && isStandaloneN(romaji, i)) {
+            result += 'ん';
+            i += romaji.charAt(i + 1) === "'" ? 2 : 1;
+            continue;
+        }
+
+        found = false;
+        for (length = 3; length > 0; length--) {
+            piece = romaji.substring(i, i + length);
+            if (piece in romajiToHiraganaMap) {
+                result += romajiToHiraganaMap[piece];
+                i += length;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            i++;
+        }
+    }
+
+    return result;
+}
+
+function isRomajiLetter(ch) {
+    return ch >= 'a' && ch <= 'z';
+}
+
+function isDoubleConsonant(romaji, i) {
+    var ch = romaji.charAt(i);
+    return ch === romaji.charAt(i + 1) && ch !== 'n' && !isRomajiVowel(ch) && isRomajiLetter(ch);
+}
+
+function isStandaloneN(romaji, i) {
+    var next = romaji.charAt(i + 1);
+    return !next || next === "'" || (!isRomajiVowel(next) && next !== 'y');
+}
+
+function isRomajiVowel(ch) {
+    return ch === 'a' || ch === 'i' || ch === 'u' || ch === 'e' || ch === 'o';
 }
 
 // Split word list into chunks to limit the length of API requests
@@ -103,9 +287,48 @@ function translateTextNodes() {
         translate(chunk, apiList);
     }
 
-    if (phraseCount) {
-        console.debug('Katakana Terminator:', phraseCount, 'phrases translated in', apiRequestCount, 'requests, frame', window.location.href);
+    var readingStats = translateFuriganaNodes();
+    if (phraseCount || readingStats.phraseCount) {
+        console.debug(
+            'Katakana Terminator:',
+            phraseCount, 'katakana phrases and',
+            readingStats.phraseCount, 'kanji readings processed in',
+            apiRequestCount + readingStats.apiRequestCount, 'requests, frame',
+            window.location.href
+        );
     }
+}
+
+function translateFuriganaNodes() {
+    var apiRequestCount = 0;
+    var phraseCount = 0;
+    var chunkSize = 100;
+    var chunk = [];
+
+    for (var phrase in furiganaQueue) {
+        phraseCount++;
+        if (phrase in cachedReadings) {
+            updateRubyByCachedReadings(phrase);
+            continue;
+        }
+
+        chunk.push(phrase);
+        if (chunk.length >= chunkSize) {
+            apiRequestCount++;
+            requestReadings(chunk);
+            chunk = [];
+        }
+    }
+
+    if (chunk.length) {
+        apiRequestCount++;
+        requestReadings(chunk);
+    }
+
+    return {
+        apiRequestCount: apiRequestCount,
+        phraseCount: phraseCount,
+    };
 }
 
 // {"keyA": 1, "keyB": 2} => "?keyA=1&keyB=2"
@@ -121,6 +344,7 @@ function translate(phrases) {
         phrases.forEach(function(phrase) {
             delete cachedTranslations[phrase];
         });
+        return;
     }
 
     // Prevent duplicate HTTP requests before the request completes
@@ -147,6 +371,79 @@ function translate(phrases) {
             return translate(phrases);
         },
     });
+}
+
+function requestReadings(phrases, hostIndex) {
+    hostIndex = hostIndex || 0;
+    if (!hostIndex) {
+        phrases.forEach(function(phrase) {
+            cachedReadings[phrase] = null;
+        });
+    }
+
+    if (hostIndex >= readingApiHosts.length) {
+        console.error('Katakana Terminator: reading fallbacks exhausted', phrases);
+        phrases.forEach(function(phrase) {
+            delete cachedReadings[phrase];
+        });
+        return;
+    }
+
+    GM_xmlhttpRequest({
+        method: "GET",
+        url: 'https://' + readingApiHosts[hostIndex] + '/translate_a/single' + buildQueryString({
+            sl: 'ja',
+            tl: 'en',
+            dt: 'rm',
+            client: 'gtx',
+            q: phrases.join(readingSeparator),
+        }),
+        onload: function(dom) {
+            try {
+                cacheReadings(phrases, JSON.parse(dom.responseText.replace("'", '\u2019')));
+            } catch (err) {
+                console.error('Katakana Terminator: invalid reading response', err, dom.responseText);
+                return requestReadings(phrases, hostIndex + 1);
+            }
+        },
+        onerror: function() {
+            console.error('Katakana Terminator: reading request error', phrases);
+            return requestReadings(phrases, hostIndex + 1);
+        },
+    });
+}
+
+function cacheReadings(phrases, resp) {
+    var romanized = extractRomanization(resp),
+        readings;
+
+    if (!romanized) {
+        throw [phrases, resp];
+    }
+
+    readings = romanized.split('/');
+    if (readings.length !== phrases.length) {
+        throw [phrases, resp, romanized];
+    }
+
+    readings.forEach(function(reading, i) {
+        var phrase = phrases[i];
+        cachedReadings[phrase] = normalizeKanaReading(romajiToHiragana(reading));
+        updateRubyByCachedReadings(phrase);
+    });
+}
+
+function extractRomanization(resp) {
+    if (!resp || !resp[0]) {
+        return null;
+    }
+
+    for (var i = resp[0].length - 1; i >= 0; i--) {
+        if (resp[0][i] && resp[0][i][3]) {
+            return resp[0][i][3];
+        }
+    }
+    return null;
 }
 
 var apiList = [
@@ -226,6 +523,35 @@ function updateRubyByCachedTranslations(phrase) {
         node.dataset.rt = cachedTranslations[phrase];
     });
     delete queue[phrase];
+}
+
+function updateRubyByCachedReadings(phrase) {
+    if (!cachedReadings[phrase]) {
+        return;
+    }
+    (furiganaQueue[phrase] || []).forEach(function(item) {
+        var reading = stripReadingSuffix(cachedReadings[phrase], item.suffix);
+        item.node.dataset.rt = reading || cachedReadings[phrase];
+    });
+    delete furiganaQueue[phrase];
+}
+
+function stripReadingSuffix(reading, suffix) {
+    var normalizedSuffix = normalizeKanaReading(suffix);
+    if (normalizedSuffix && reading.substring(reading.length - normalizedSuffix.length) === normalizedSuffix) {
+        return reading.substring(0, reading.length - normalizedSuffix.length);
+    }
+    return reading;
+}
+
+function normalizeKanaReading(text) {
+    return kanaToHiragana(text).replace(/[^\u3041-\u3096]/g, '');
+}
+
+function kanaToHiragana(text) {
+    return text.replace(/[\u30A1-\u30F6]/g, function(ch) {
+        return String.fromCharCode(ch.charCodeAt(0) - 0x60);
+    });
 }
 
 // Watch newly added DOM nodes, and save them for later use

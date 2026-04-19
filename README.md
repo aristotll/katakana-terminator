@@ -1,9 +1,9 @@
 ### Katakana Terminator 片假名终结者 カタカナ‌ターミネーター
 
 #### In a nutshell 简介
-A browser extension to convert *gairaigo* (Japanese loan words) back to English.
+A browser extension to convert *gairaigo* (Japanese loan words) back to English and add hiragana readings above kanji.
 
-这是一个浏览器扩展插件，在网页中的日语外来语上方标注英文原词。
+这是一个浏览器扩展插件，在网页中的日语外来语上方标注英文原词，并为汉字标注平假名读音。
 
 #### Installation 安装
 Please follow the [installation instructions](https://greasyfork.org/en) to configure your browser,
@@ -15,6 +15,17 @@ then [click here to get the user script](https://github.com/Arnie97/katakana-ter
 *Gairaigo* from other source languages is also converted to English.
 
 即便一组片假名并非源于英语，也会标注为英语中的对应词汇。
+
+Kanji readings are generated from Google romanization and converted to hiragana locally, so long vowels, names, and context-dependent readings may be inaccurate.
+
+汉字读音由 Google 罗马字结果在本地转换为平假名，因此长音、人名以及依赖上下文的读音可能不准确。
+
+#### Testing 测试
+Run the local tests with Node.js 18 or newer:
+
+```sh
+node --test tests/*.test.js
+```
 
 #### Thanks 致谢
 Based on the Google Translate API, which was described in [this post](https://github.com/ssut/py-googletrans/issues/268).
