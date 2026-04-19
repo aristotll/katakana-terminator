@@ -27,6 +27,11 @@ There is no package manager setup, build step, or automated test suite in this r
 - Prefer structured browser APIs over string-based DOM manipulation.
 - Be careful around global names; this script runs on arbitrary webpages.
 
+## Documentation Style
+
+- Use Japanese as the default language for new user-facing documentation unless the task requests another language or an existing section is intentionally multilingual.
+- When explaining loan words, follow the Katakana Terminator style: write the katakana form first, followed by the original English or other Western source word in parentheses, for example `カタカナ(katakana)`.
+
 ## Behavioral Notes
 
 - `scanTextNodes` recursively walks DOM nodes and skips editable or script-like content.
